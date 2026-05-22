@@ -39,16 +39,63 @@ description: AIO 终端高保真 DEMO 构建技能。核心原则：基座优先
 
 **用户体验目标：用户只需输入需求描述，AI 负责从 0 到 1 构建出可直接运行的完整文件夹环境。**
 
-## 2. 离线健壮性标准 (Anti-Black Screen)
+## 2. 离线健壮性与代码正确性标准 (Anti-Black Screen)
 
-为了彻底杜绝 Demo 在无网络环境下出现“黑屏”或“图标失效”，必须遵守以下铁律：
+为了彻底杜绝 Demo 黑屏、图标失效或交互异常，必须遵守以下铁律：
 
-- **禁止外部依赖**：严禁使用 `lucide-react` 或任何 CDN 图标库。所有图标必须使用 **纯内联 SVG**（已集成在基座代码中）。
-- **资源本地化**：所有 `<img>` 标签的 `src` 必须指向 `../../aio-terminal-demo/assets/icons/` 下的本地物理文件。
-- **变量完整性（防止 JS 崩溃）**：
-  - **ReferenceError 预防**：在修改 UI 逻辑（如新增 Workspace 分类、Favorite 状态）时，必须**第一时间**在组件顶部（`useState` 区域）声明对应的状态变量。使用未定义的变量（如 `activeCategory`）会导致 React 渲染树崩溃，表现为整个窗口黑屏。
-  - **逻辑自检**：输出代码前，必须检查 JSX 中引用的所有 `state`、`props`、`helper functions` 是否已在代码块中完整定义。
-- **全闭环运行**：Demo 必须包含本地 `./libs/` 目录。AI 在创建项目时应从 `aio-terminal-demo/libs/` 自动同步。禁止在生成代码中出现外部 CDN 链接。
+### 2.1 资源离线化
+- **禁止外部依赖**：严禁使用 `lucide-react` 或任何 CDN 图标库。所有图标必须使用**纯内联 SVG**（已集成在基座代码中）。
+- **资源本地化**：所有 `<img>` 的 `src` 必须指向 `../../aio-terminal-demo/assets/icons/` 下的本地物理文件。
+- **全闭环运行**：Demo 必须包含本地 `./libs/` 目录。AI 创建项目时应从 `aio-terminal-demo/libs/` 自动同步，禁止生成代码中出现外部 CDN 链接。
+
+### 2.2 React 代码结构铁律（防止整页黑屏）
+
+> ⚠️ 本节为根据真实黑屏事故新增的核心约束，违反其中任意一条都会导致页面完全黑屏。
+
+**【铁律 1】`ReactDOM.createRoot().render()` 必须在所有组件函数定义的外部**
+
+正确写法：render 在所有组件之外，脚本最后一行：
+```
+function App() { ... }
+function SubComp() { ... }
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);  // ← 脚本最后一行，绝不嵌套在任何函数内
+```
+致命错误：render 被嵌套在组件内，return 之后永远不执行 → 黑屏：
+```
+function App() {
+  return ( ... );
+  const root = ReactDOM.createRoot(...); // 死代码，永远不执行
+  root.render(<App />);
+}
+```
+
+**【铁律 2】跨组件使用的 state 必须提升至最近公共祖先（状态提升）**
+
+跨多个组件共享的变量（如 `username`、`loggedIn`）必须在共同父组件中定义，通过 `props` 向下传递。禁止在子组件内定义状态却在父组件中直接引用——会产生 `ReferenceError` 导致渲染树崩溃黑屏：
+```
+// ✅ 正确：username 在父组件定义，props 向下传递
+function Shell() {
+  const [username, setUsername] = useState('张三');
+  return <ClientPanel username={username} setUsername={setUsername} />;
+}
+
+// ❌ 错误：username 定义在子组件，父组件却直接引用 → 崩溃黑屏
+function ClientPanel() { const [username] = useState('张三'); }
+function Shell() { return <Notification userName={username} />; }
+```
+
+**【铁律 3】输出代码前必须执行作用域三连自检**
+
+生成代码、写入文件前，对照以下清单心算验证：
+- `ReactDOM.render()` 是否在所有组件定义**之外**？
+- JSX 中引用的每个变量，是否在**同一作用域**内已有声明？
+- 跨组件共享的状态，是否已提升到**最近公共祖先**？
+
+### 2.3 效率约束（防止任务超时）
+- **单次生成，一次到位**：AI 必须在充分理解需求后，一次性生成完整正确的 `index.html`，禁止「先写草稿→截图验证→再修改」的迭代模式。Babel 浏览器端编译大型 JSX 需要数秒，多轮 browser_subagent 截图会将任务放大至 10–20 分钟。
+- **验证仅在最终产物上执行一次**：browser_subagent 截图确认只在文件完全写完后执行一次，不得在写码过程中反复截图。
+- **整体一次写入**：`index.html` 必须通过 `write_to_file` 整体写入，禁止多次 `replace_file_content` 拼凑——分段拼凑是本次黑屏事故的直接诱因之一。
 
 ## 3. 平台规范区分
 
